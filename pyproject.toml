@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gnomad_lof"
+version = "0.0.0"
+description = "Fork for constraint utils"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["constraint_utils"]
+
+[tool.setuptools.package-dir]
+"" = "."
