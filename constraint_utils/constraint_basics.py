@@ -1,6 +1,6 @@
 __author__ = 'konradk'
 
-from generic import *
+from .generic import *
 import pickle
 import copy
 import uuid

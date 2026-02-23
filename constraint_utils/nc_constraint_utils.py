@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-from generic import *
-from constraint_basics import *
+from .generic import *
+from .constraint_basics import *
 
 
 def filter_to_autosomes_par(ht: Union[hl.Table, hl.MatrixTable]) -> Union[hl.Table, hl.MatrixTable]:
