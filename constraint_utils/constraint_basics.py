@@ -1,8 +1,6 @@
 __author__ = 'konradk'
 
-from typing import Any, Tuple, Union, Optional, List
-
-from .generic import *
+from generic import *
 import pickle
 import copy
 import uuid
@@ -55,35 +53,12 @@ def load_all_possible_summary(filtered: bool = True) -> Dict[hl.Struct, int]:
         return pickle.load(f)
 
 
-def load_tx_expression_data(context: bool =True) -> hl.Table:
-    """
-    Load tx MatrixTable with processed expression data.
-
-    :param context: Whether to load the Table with proportion expressed across transcripts (pext) score annotations
-    for all possible bases or the Table with pext scores for sites found in gnomAD v2.1.1 exomes, defaults to True.
-    :return: tx Table with expression data.
-    """
+def load_tx_expression_data(context=True):
     tx_ht_file = 'gs://gnomad-public/papers/2019-tx-annotation/pre_computed/all.possible.snvs.tx_annotated.021819.ht' if context \
         else 'gs://gnomad-public/papers/2019-tx-annotation/gnomad.exomes.r2.1.1.sites.tx_annotated.021319.ht'
     tx_ht = hl.read_matrix_table(tx_ht_file).rows()
 
-    def process_expression_data(csq_expression: hl.expr.StructExpression) -> hl.expr.StructExpression:
-        """
-        Process expression data by adding annotations and drop tissue columns other than Brain_Cortex.
-        
-        Function will add the following annotations to tx Table:
-            - ensg
-            - csq
-            - symbol
-            - lof
-            - mean_expression
-            - max_expression
-            - mean_brain_expression
-            - Brain_Cortex
-
-        :param csq_expression: 'tx_annotation' (a StructExpression) within tx Table
-        :return: Expression data
-        """
+    def process_expression_data(csq_expression):
         exprs_to_drop = ['ensg', 'csq', 'symbol', 'lof', 'lof_flag', 'mean_proportion']
         expression_data = csq_expression.drop(*exprs_to_drop)
         all_tissues = list(expression_data.values())
@@ -99,13 +74,7 @@ def load_tx_expression_data(context: bool =True) -> hl.Table:
     return tx_ht.annotate(tx_annotation=tx_ht.tx_annotation.map(process_expression_data))
 
 
-def annotate_distance_to_splice(input_ht: hl.Table) -> hl.Table:
-    """
-    Annotate distance to the nearest splice site.
-
-    :param input_ht: Input exome or context Table.
-    :return: Table with 'nearest_splice' annotation added (distance to nearest splice site).
-    """
+def annotate_distance_to_splice(input_ht):
     # Load GTF file
     tmp_path = f'/tmp_{uuid.uuid4()}.ht'
     ht = hl.experimental.import_gtf('gs://hail-common/references/gencode/gencode.v19.annotation.gtf.bgz', 'GRCh37', True, min_partitions=100)
@@ -222,54 +191,12 @@ def split_context_mt(raw_context_ht_path: str, coverage_ht_paths: Dict[str, str]
 
 def pre_process_data(ht: hl.Table, split_context_ht_path: str,
                      output_ht_path: str, overwrite: bool = False) -> None:
-    """ 
-    Add annotations from VEP context Table to gnomAD data.
-    
-    Function adds the following annotations:
-        - context
-        - methylation
-        - coverage
-        - gerp
-        - pass_filters
-    
-    Function drops `a_index`, `was_split`, and`colocated_variants` annotations from gnomAD data.
-    
-    .. note::
-        Function expects that multiallelic variants in the VEP context Table have been split.
-    
-    :param ht: gnomAD exomes or genomes public Hail Table. 
-    :param split_context_ht_path: Path to VEP context Table.
-    :param output_ht_path: Path to output Table.
-    :param overwrite: Whether to overwrite existing data. Defaults to False.
-    """
     context_ht = hl.read_table(split_context_ht_path).drop('a_index', 'was_split')
     context_ht = context_ht.annotate(vep=context_ht.vep.drop('colocated_variants'))
     ht.annotate(**context_ht[ht.key], pass_filters=hl.len(ht.filters) == 0).write(output_ht_path, overwrite)
 
 
 def prepare_ht(ht, trimer: bool = False, annotate_coverage: bool = True):
-    """
-    Filter input Table and add annotations used in constraint calculations.
- 
-    Function filters to SNPs, removes rows with undefined contexts, collapses strands
-    to deduplicate trimer or heptamer contexts, and annotates the input Table.
-
-    Function adds the following annotations:
-        - ref
-        - alt
-        - was_flipped
-        - methylation_level
-        - cpg
-        - transition
-        - variant_type
-        - variant_type_model
-        - exome_coverage
-   
-    :param ht: Input Table to be annotated.
-    :param trimer: Whether to use trimers or heptamers. Defaults to False.
-    :param annotate_coverage: Whether to annotate the coverage of exome. Defaults to True.
-    :return: Table with annotations.
-    """
     if trimer:
         ht = trimer_from_heptamer(ht)
     str_len = 3 if trimer else 7
@@ -300,15 +227,6 @@ def filter_to_autosomes_par(ht: Union[hl.Table, hl.MatrixTable]) -> Union[hl.Tab
 
 def annotate_with_mu(ht: hl.Table, mutation_ht: hl.Table, output_loc: str = 'mu_snp',
                      keys: Tuple[str] = ('context', 'ref', 'alt', 'methylation_level')) -> hl.Table:
-    """
-    Annotate SNP mutation rate for the input Table.
-
-    :param ht: Input Table.
-    :param mutation_ht: Mutation rate Table.
-    :param output_loc: Name for mutational rate annotation. Defaults to 'mu_snp'.
-    :param keys: Common keys between mutation rate Table and input Table. Defaults to ('context', 'ref', 'alt', 'methylation_level').
-    :return: Table with mutational rate annotation added (default name for annotation is 'mu_snp').
-    """
     mu = hl.literal(mutation_ht.aggregate(hl.dict(hl.agg.collect(
         (hl.struct(**{k: mutation_ht[k] for k in keys}), mutation_ht.mu_snp)))))
     mu = mu.get(hl.struct(**{k: ht[k] for k in keys}))
@@ -421,17 +339,6 @@ def calculate_mu_by_downsampling(genome_ht: hl.Table, raw_context_ht: hl.MatrixT
 def get_proportion_observed_by_coverage(exome_ht: hl.Table, context_ht: hl.Table, mutation_ht: hl.Table,
                                         recompute_possible: bool = False, dataset: str = 'gnomad',
                                         impose_high_af_cutoff_upfront: bool = True) -> hl.Table:
-    """
-    Count the observed variants and possible variants by exome coverage. 
-
-    :param exome_ht: Preprocessed exome Table.
-    :param context_ht: Preprocessed context Table.
-    :param mutation_ht: Preprocessed mutation rate Table.
-    :param recompute_possible: Whether to use context Table to recompute the number of possible variants instead of using a precomputed intermediate Table if it exists. Defaults to False.
-    :param dataset: Dataset to use when computing frequency index. Defaults to 'gnomad'.
-    :param impose_high_af_cutoff_upfront: Whether to remove high frequency alleles. Defaults to True.
-    :return: Table with observed variant and possible variant count.
-    """
 
     exome_ht = add_most_severe_csq_to_tc_within_ht(exome_ht)
     context_ht = add_most_severe_csq_to_tc_within_ht(context_ht)
@@ -447,16 +354,7 @@ def get_proportion_observed_by_coverage(exome_ht: hl.Table, context_ht: hl.Table
     exome_join = exome_ht[context_ht.key]
     freq_index = exome_ht.freq_index_dict.collect()[0][dataset]
 
-    def keep_criteria(ht: Union[hl.Table, hl.expr.StructExpression]) -> hl.expr.BooleanExpression:
-        """
-        Generate expression to keep PASS variants with an allele count greater than 0.
-        
-        If `impose_high_af_cutoff_upfront` is True, only keep variants with an AF less than or equal to 
-        `af_cutoff` (default is 0.001).
-        
-        :param ht: Table or StructExpression of variants that have a defined key in the `context_ht`.
-        :return: BooleanExpression indicating if the row should be kept.
-        """
+    def keep_criteria(ht):
         crit = (ht.freq[freq_index].AC > 0) & ht.pass_filters
         if impose_high_af_cutoff_upfront:
             crit &= (ht.freq[freq_index].AF <= af_cutoff)
@@ -480,56 +378,6 @@ def get_proportion_observed_by_coverage(exome_ht: hl.Table, context_ht: hl.Table
 
 def build_models(coverage_ht: hl.Table, trimers: bool = False, weighted: bool = False, half_cutoff = False,
                  ) -> Tuple[Tuple[float, float], Dict[str, Tuple[float, float]]]:
-    """
-    Build coverage model and plateau models.
-    
-    This function builds plateau models to calibrate mutation rate estimates against the proportion observed
-    of each substitution, context, and methylation level in `coverage_ht` considering only high coverage sites,
-    or sites above a median coverage of `HIGH_COVERAGE_CUTOFF` (or half of `HIGH_COVERAGE_CUTOFF` if `half_cutoff`
-    is True). If using the output of `get_proportion_observed_by_coverage` as `coverage_ht`, the proportion observed
-    will be high-quality variants below 0.1% frequency at synonymous sites. Two plateau models are fit, one for CpG
-    transitions and one for the remainder of sites (transversions and non-CpG transitions). 
-    
-    The x and y of plateau models:
-        x: `mu_snp` - mutation rate
-        y: proportion observed ('variant_count' or 'observed_{pop}' / 'possible_variants') 
-    
-    For low coverage sites, or sites below `HIGH_COVERAGE_CUTOFF` (or half of `HIGH_COVERAGE_CUTOFF` if `half_cutoff` is
-    True), this function performs a base-level resolution rather than exon-level to compute a coverage correction factor
-    to reduce the inaccuracy of expected variant counts caused by low coverage on each base. The coverage models are built
-    by first defining a metric that is derived by dividing the number of observed variants with the total number of 
-    possible variants times the mutation rate summed across all substitutions, contexts, and methylation level. If using
-    the output of `get_proportion_observed_by_coverage` as `coverage_ht`, the number of observed variants and possible
-    variants will be at synonymous sites. The function computes this metric for high coverage sites as a global scaling
-    factor, and divides this metric at low coverage sites by this scaling factor to create an observed:expected ratio. Then the
-    coverage model is built of log10(coverage) to this scaled ratio as a correction factor for low coverage sites.
-    
-    The x and y of the coverage model:
-        x: log10('exome_coverage') at low coverage site
-        y: sum('variant_count')/ (`high_coverage_scale_factor` * sum('possible_variants' * 'mu_snp') at low coverage site
-            where `high_coverage_scale_factor` = sum('variant_count') / sum('possible_variants' * 'mu_snp') at high coverage site
-    
-    .. note::
-        This function expects that the input `coverage_ht` is the output of `get_proportion_observed_by_coverage`, and
-        therefore the following fields should be present in `coverage_ht`:
-            - context - trinucleotide genomic context
-            - ref - the middle base of `context`
-            - alt - the alternate base
-            - methylation_level - methylation level
-            - exome_coverage - median exome coverage at integer values between 1-100
-            - variant_count - the number of observed variants in the dataset for each substitution (`alt`), `context`,
-            `methylation_level`, and median exome coverage (`exome_coverage`)
-            - downsampling_counts_{pop} (pop defaults to `POPS`) - array of observed variant counts per population after downsampling
-            - mu_snp - mutation rate
-            - possible_variants - the number of possible variants in the dataset for each substitution (`alt`), `context`,
-            `methylation_level`, and median exome coverage (`exome_coverage`)
-
-    :param coverage_ht: Input coverage Table.
-    :param trimers: Whether the contexts were trimmed or not. Defaults to False.
-    :param weighted: Whether to weight the high coverage model (a linear regression model) by 'possible_variants'. Defaults to False.
-    :param half_cutoff: Whether to use half of `HIGH_COVERAGE_CUTOFF` as coverage cutoff. Otherwise `HIGH_COVERAGE_CUTOFF` will be used. Defaults to False.
-    :return: Coverage model and plateau models.
-    """
     keys = ['context', 'ref', 'alt', 'methylation_level', 'mu_snp']
 
     cov_cutoff = (HIGH_COVERAGE_CUTOFF / half_cutoff) if half_cutoff else HIGH_COVERAGE_CUTOFF
@@ -561,26 +409,13 @@ def build_models(coverage_ht: hl.Table, trimers: bool = False, weighted: bool = 
     return coverage_model, plateau_models
 
 
-def add_most_severe_csq_to_tc_within_ht(t: Union[hl.Table, hl.MatrixTable]) -> Union[hl.Table, hl.MatrixTable]:
-    """
-    Add most_severe_consequence annotation to 'transcript_consequences' within the vep annotation.
-    
-    :param t: Input Table or MatrixTable.
-    :return: Input Table or MatrixTable with most_severe_consequence annotation added.
-    """
+def add_most_severe_csq_to_tc_within_ht(t):
     annotation = t.vep.annotate(transcript_consequences=t.vep.transcript_consequences.map(
         add_most_severe_consequence_to_consequence))
     return t.annotate_rows(vep=annotation) if isinstance(t, hl.MatrixTable) else t.annotate(vep=annotation)
 
 
-def take_one_annotation_from_tc_within_ht(t: Union[hl.Table, hl.MatrixTable]) -> Union[hl.Table, hl.MatrixTable]: 
-    """
-    Annotate 'transcript_consequences' using only the first consequence (index 0) of 'transcript_consequences' within the
-    vep annotation of the input Table.
-
-    :param t: Input Table or MatrixTable.
-    :return: Table or MatrixTable with only the first consequence for the 'transcript_consequences' annotation.
-    """
+def take_one_annotation_from_tc_within_ht(t):
     annotation = t.vep.annotate(transcript_consequences=t.vep.transcript_consequences[0])
     return t.annotate_rows(vep=annotation) if isinstance(t, hl.MatrixTable) else t.annotate(vep=annotation)
 
@@ -590,46 +425,7 @@ def get_proportion_observed(exome_ht: hl.Table, context_ht: hl.Table, mutation_h
                             recompute_possible: bool = False, remove_from_denominator: bool = True,
                             custom_model: str = None, dataset: str = 'gnomad',
                             impose_high_af_cutoff_upfront: bool = True, half_cutoff = False) -> hl.Table:
-    """
-    Compute the expected number of variants and observed:expected ratio using plateau models and coverage model.
 
-    This function sums the number of possible variants times the mutation rate for all variants, and applies the calibration
-    model separately for CpG transitions and other sites. For sites with coverage lower than the coverage cutoff, the value obtained 
-    from the previous step is multiplied by the coverage correction factor. These values are summed across the set of variants 
-    of interest to obtain the expected number of variants.
-    
-    A brief view of how to get the expected number of variants:
-        mu_agg = the number of possible variants * the mutation rate (all variants)
-        adjusted_mutation_rate = sum(plateau model slop * mu_agg + plateau model intercept) (separately for CpG transitions and other sites)
-        if 0 < coverage < coverage cutoff:
-            coverage_correction = coverage_model slope * log10(coverage) + coverage_model intercept
-            expected_variants = sum(adjusted_mutation_rate * coverage_correction)
-        else:
-            expected_variants = sum(adjusted_mutation_rate)
-        The expected_variants are summed across the set of variants of interest to obtain the final expected number of variants.
-    
-    Function adds the following annotations:
-        - variant_count - observed variant counts annotated by `count_variants` function grouped by groupings (output of `annotate_constraint_groupings`)
-        - adjusted_mutation_rate (including those for each population) - the sum of mutation rate adjusted by plateau models and possible variant counts grouped by groupings
-        - possible_variants (including those for each population) - the sum of possible variant counts derived from the context Table grouped by groupings
-        - expected_variants (including those for each population) - the sum of expected variant counts grouped by groupings
-        - mu - sum(mu_snp * possible_variant * coverage_correction) grouped by groupings
-        - obs_exp - observed:expected ratio
-        - annotations annotated by `annotate_constraint_groupings`
-
-    :param exome_ht: Exome site Table (output of `prepare_ht`) filtered to autosomes and pseudoautosomal regions.
-    :param context_ht: Context Table (output of `prepare_ht`) filtered to autosomes and pseudoautosomal regions.
-    :param mutation_ht: Mutation rate Table with 'mu_snp' field.
-    :param plateau_models: Linear models (output of `build_plateau_models_pop`), with the values of the dictionary formatted as a Tuple of intercept and slope, that calibrates mutation rate to proportion observed for high coverage exome. It includes models for CpG site, non-CpG site, and each population in `POPS`.
-    :param coverage_model: A linear model (output of `build_coverage_model`), formatted as a Tuple of intercept and slope, that calibrates a given coverage level to observed:expected ratio. It's a correction factor for low coverage sites.
-    :param recompute_possible: Whether to use context Table to recompute the number of possible variants instead of using a precomputed intermediate Table if it exists. Defaults to False.
-    :param remove_from_denominator: Whether to remove alleles in context Table if found in 'exome_ht' and is not a PASS variant with an allele count greater than 0, defaults to True
-    :param custom_model: The customized model (one of "standard" or "worst_csq" for now), defaults to None.
-    :param dataset: Dataset to use when computing frequency index, defaults to 'gnomad'.
-    :param impose_high_af_cutoff_upfront: Whether to remove alleles with allele frequency larger than `af_cutoff` (0.001), defaults to True.
-    :param half_cutoff: Whether to use half of `HIGH_COVERAGE_CUTOFF` as coverage cutoff. Otherwise `HIGH_COVERAGE_CUTOFF` will be used, defaults to False.
-    :return: Table with `expected_variants` (expected variant counts) and `obs_exp` (observed:expected ratio) annotations.
-    """
     exome_ht = add_most_severe_csq_to_tc_within_ht(exome_ht)
     context_ht = add_most_severe_csq_to_tc_within_ht(context_ht)
 
@@ -743,26 +539,6 @@ def get_proportion_observed(exome_ht: hl.Table, context_ht: hl.Table, mutation_h
 
 def finalize_dataset(po_ht: hl.Table, keys: Tuple[str] = ('gene', 'transcript', 'canonical'),
                      n_partitions: int = 1000) -> hl.Table:
-    """
-    Compute the pLI scores, 90% confidence interval around the observed:expected ratio, and z scores 
-    for synonymous variants, missense variants, and predicted loss-of-function (pLoF) variants.
-    
-    .. note::
-        The following annotations should be present in `po_ht`:
-            - modifier
-            - annotation
-            - variant_count
-            - mu
-            - possible_variants
-            - expected_variants
-            - expected_variants_{pop} (pop defaults to `POPS`)
-            - downsampling_counts_{pop} (pop defaults to `POPS`)
- 
-    :param po_ht: Input Table with the number of expected variants (output of `get_proportion_observed`).
-    :param keys: The keys of the output Table, defaults to ('gene', 'transcript', 'canonical').
-    :param n_partitions: Desired number of partitions for `Table.repartition()`, defaults to 1000.
-    :return: Table with pLI scores, confidence interval of the observed:expected ratio, and z scores.
-    """
     # This function aggregates over genes in all cases, as XG spans PAR and non-PAR X
     po_ht = po_ht.repartition(n_partitions).persist()
 
@@ -824,35 +600,6 @@ def finalize_dataset(po_ht: hl.Table, keys: Tuple[str] = ('gene', 'transcript', 
 
 
 def collapse_lof_ht(lof_ht: hl.Table, keys: Tuple[str], calculate_pop_pLI: bool = False) -> hl.Table:
-    """
-    Collapse the `lof_ht` by `keys` and annotate pLI scores and observed:expected ratio for pLoF variants.
-    
-    Function sums the number of observed pLoF variants, possible pLoF variants, and expected pLoF variants
-    across all the combinations of `keys`, and uses the expected variant counts and observed variant counts
-    to compute the pLI scores and observed:expected ratio.
-            
-    The following annotations are added to the output Table:
-        - obs_lof - the sum of observed pLoF variants grouped by `keys`
-        - mu_lof - the sum of mutation rate at pLoF variants grouped by `keys`
-        - possible_lof - possible number of pLoF variants grouped by `keys`
-        - exp_lof - expected number of pLoF variants grouped by `keys`
-        - exp_lof_{pop} (pop defaults to `POPS`) - expected number of pLoF variants per population grouped by `keys`
-        - obs_lof_{pop} (pop defaults to `POPS`) - observed number of pLoF variants per population grouped by `keys`
-        - oe_lof - observed:expected ratio for pLoF variants (oe_lof=lof_ht.obs_lof / lof_ht.exp_lof)
-        - annotations added by function `pLI()`
-
-    .. note::
-        The following annotations should be present in `lof_ht`:
-            - variant_count
-            - mu
-            - possible_variants
-            - expected_variants
-            
-    :param lof_ht: Table with specific pLoF annotations.
-    :param keys: The keys used to collapse `lof_ht` and use as keys for the output Table.
-    :param calculate_pop_pLI: Whether to calculate the pLI score for each population, defaults to False.
-    :return: A collapsed Table with pLI scores and observed:expected ratio for pLoF variants.
-    """
     agg_expr = {
         'obs_lof': hl.agg.sum(lof_ht.variant_count),
         'mu_lof': hl.agg.sum(lof_ht.mu),
@@ -888,23 +635,9 @@ def collapse_lof_ht(lof_ht: hl.Table, keys: Tuple[str], calculate_pop_pLI: bool 
 def annotate_constraint_groupings(ht: Union[hl.Table, hl.MatrixTable],
                                   custom_model: str = None) -> Tuple[Union[hl.Table, hl.MatrixTable], List[str]]:
     """
-    Add constraint annotations to be used for groupings.
-    
-    Function adds the following annotations:
-        - annotation - could be 'most_severe_consequence' of either 'worst_csq_by_gene' or 'transcript_consequences', or 'csq' of 'tx_annotation'
-        - modifier - classic lof annotation, LOFTEE annotation, or PolyPhen annotation
-        - gene
-        - coverage
-        - expressed (added when custom model specified as tx_annotation)
-        - transcript (added when custom model isn't specified as worst_csq or tx_annotation)
-        - canonical (added when custom model isn't specified as worst_csq or tx_annotation)
-    
-    ..note::
-        HT must be exploded against whatever axis.
+    HT must be exploded against whatever axis
 
-    :param ht: Input Table or MatrixTable.
-    :param custom_model: The customized model (one of "standard" or "worst_csq" for now), defaults to None.
-    :return: A tuple of input Table or MatrixTable with grouping annotations added and the names of added annotations.
+    Need to add `'coverage': ht.exome_coverage` here (which will get corrected out later)
     """
     if custom_model == 'worst_csq':
         groupings = {
@@ -952,39 +685,14 @@ def annotate_constraint_groupings(ht: Union[hl.Table, hl.MatrixTable],
 # Model building
 def build_coverage_model(coverage_ht: hl.Table) -> (float, float):
     """
-    Calibrate coverage model.
-    
-    This function uses linear regression to build a model of log10(coverage) to this scaled ratio as a correction
-    factor for low coverage sites.
-    
-    .. note::
-        The following annotations should be present in `coverage_ht`:
-            - low_coverage_obs_exp - an observed:expected ratio for a given coverage level 
-            - log_coverage - log10 coverage
-    
-    :param coverage_ht: Low coverage Table.
-    :return: Tuple with intercept and slope of the model.
+    Calibrates coverage model (returns intercept and slope)
     """
     return tuple(coverage_ht.aggregate(hl.agg.linreg(coverage_ht.low_coverage_obs_exp, [1, coverage_ht.log_coverage])).beta)
 
 
 def build_plateau_models(ht: hl.Table, weighted: bool = False) -> Dict[str, Tuple[float, float]]:
     """
-    Calibrate high coverage model.
-    
-    The function fits two models, one for CpG transitions and one for the remainder of sites, to calibrate
-    from the mutation rate to proportion observed.
-    
-    .. note::
-        The following annotations should be present in `ht`:
-            - observed_variants - observed variant counts for each combination of 'context', 'ref', 'alt', 'methylation_level', 'mu_snp
-            - possible_variants - possible variant counts for each combination of 'context', 'ref', 'alt', 'methylation_level', 'mu_snp
-            - cpg - whether it's a cpg site or not
-            - mu_snp - mutation rate
-    
-    :param ht: High coverage Table.
-    :param weighted: Whether to generalize the model to weighted least squares using 'possible_variants'.
-    :return: A Dictionary of intercepts and slopes for observed variants overall.
+    Calibrates high coverage model (returns intercept and slope)
     """
     # TODO: try square weighting
     ht = ht.annotate(high_coverage_proportion_observed=ht.observed_variants / ht.possible_variants)
@@ -996,22 +704,7 @@ def build_plateau_models(ht: hl.Table, weighted: bool = False) -> Dict[str, Tupl
 
 def build_plateau_models_pop(ht: hl.Table, weighted: bool = False) -> Dict[str, Tuple[float, float]]:
     """
-    Calibrate high coverage model (returns intercept and slope).
-    
-    The function fits two models, one for CpG transitions and one for the remainder of sites, to calibrate
-    from the mutation rate to proportion observed in total and in each population.
-    
-    .. note::
-        The following annotations should be present in `ht`:
-            - observed_variants - observed variant counts for each combination of 'context', 'ref', 'alt', 'methylation_level', 'mu_snp
-            - observed_variants_{pop} (where pop is each population) - observed variant counts for each population
-            - possible_variants - possible variant counts for each combination of 'context', 'ref', 'alt', 'methylation_level', 'mu_snp
-            - cpg - whether it's a cpg site or not
-            - mu_snp - mutation rate
-    
-    :param ht: High coverage Table.
-    :param weighted: Whether to generalize the model to weighted least squares using 'possible_variants'.
-    :return: A Dictionary of intercepts and slopes for the full plateau models.
+    Calibrates high coverage model (returns intercept and slope)
     """
     pop_lengths = get_all_pop_lengths(ht)
     agg_expr = {
@@ -1029,17 +722,6 @@ def build_plateau_models_pop(ht: hl.Table, weighted: bool = False) -> Dict[str, 
 
 
 def get_all_pop_lengths(ht, prefix: str = 'observed_', pops: List[str] = POPS, skip_assertion: bool = False):
-    """
-    Get the minimum array length for specific per population annotations in `ht`.
-    
-    The annotations are specified by the combination of `prefix` and each population in `pops`.
-
-    :param ht: Input Table.
-    :param prefix: Prefix of population variant count. Defaults to 'observed_'.
-    :param pops: List of populations. Defaults to `POPS`.
-    :param skip_assertion: Whether to skip raising an AssertionError if all the arrays of variant counts within a population don't have the same length. Defaults to False.
-    :return: A Dictionary with the minimum array length for each population.
-    """
     ds_lengths = ht.aggregate([hl.agg.min(hl.len(ht[f'{prefix}{pop}'])) for pop in pops])
     # temp_ht = ht.take(1)[0]
     # ds_lengths = [len(temp_ht[f'{prefix}{pop}']) for pop in pops]
@@ -1076,20 +758,6 @@ def old_new_compare(source, axis_type='log'):
 
 
 def pLI(ht: hl.Table, obs: hl.expr.Int32Expression, exp: hl.expr.Float32Expression) -> hl.Table:
-    """
-    Compute the pLI score using the observed and expected variant counts.
-    
-    The output Table will include the following annotations:
-        - pLI - Probability of loss-of-function intolerance; probability that transcript falls into 
-            distribution of haploinsufficient genes
-        - pNull - Probability that transcript falls into distribution of unconstrained genes
-        - pRec - Probability that transcript falls into distribution of recessive genes
-
-    :param ht: Input Table.
-    :param obs: Expression for the number of observed variants on each gene or transcript in `ht`.
-    :param exp: Expression for the number of expected variants on each gene or transcript in `ht`.
-    :return: StructExpression for the pLI score.
-    """
     last_pi = {'Null': 0, 'Rec': 0, 'LI': 0}
     pi = {'Null': 1 / 3, 'Rec': 1 / 3, 'LI': 1 / 3}
     expected_values = {'Null': 1, 'Rec': 0.463, 'LI': 0.089}
@@ -1111,28 +779,6 @@ def pLI(ht: hl.Table, obs: hl.expr.Int32Expression, exp: hl.expr.Float32Expressi
 
 def oe_confidence_interval(ht: hl.Table, obs: hl.expr.Int32Expression, exp: hl.expr.Float32Expression,
                            prefix: str = 'oe', alpha: float = 0.05, select_only_ci_metrics: bool = True) -> hl.Table:
-    """
-    Determine the confidence interval around the observed:expected ratio.
-    
-    For a given pair of observed (`obs`) and expected (`exp`) values, the function computes the density of the Poisson distribution
-    (performed using Hail's `dpois` module) with fixed k (`x` in `dpois` is set to the observed number of variants) over a range of
-    lambda (`lamb` in `dpois`) values, which are given by the expected number of variants times a varying parameter ranging between
-    0 and 2. The cumulative density function of the Poisson distribution density is computed and the value of the varying parameter
-    is extracted at points corresponding to `alpha` (defaults to 5%) and 1-`alpha`(defaults to 95%) to indicate the lower and upper
-    bounds of the confidence interval.
-    
-    Function will have following annotations in the output Table in addition to keys:
-        - {prefix}_lower - the lower bound of confidence interval
-        - {prefix}_upper - the upper bound of confidence interval
-
-    :param ht: Input Table with the observed and expected variant counts for pLoF, missense, and synonymous variants.
-    :param obs: Expression for the observed variant counts of pLoF, missense, or synonymous variants in `ht`.
-    :param exp: Expression for the expected variant counts of pLoF, missense, or synonymous variants in `ht`.
-    :param prefix: Prefix of upper and lower bounds, defaults to 'oe'.
-    :param alpha: The significance level used to compute the confidence interval, defaults to 0.05.
-    :param select_only_ci_metrics: Whether to return only upper and lower bounds instead of keeping all the annotations except `_exp`, defaults to True.
-    :return: Table with the confidence interval lower and upper bounds.
-    """
     ht = ht.annotate(_obs=obs, _exp=exp)
     oe_ht = ht.annotate(_range=hl.range(0, 2000).map(lambda x: hl.float64(x) / 1000))
     oe_ht = oe_ht.annotate(_range_dpois=oe_ht._range.map(lambda x: hl.dpois(oe_ht._obs, oe_ht._exp * x)))
@@ -1155,50 +801,12 @@ def oe_confidence_interval(ht: hl.Table, obs: hl.expr.Int32Expression, exp: hl.e
 
 
 def calculate_z(input_ht: hl.Table, obs: hl.expr.NumericExpression, exp: hl.expr.NumericExpression, output: str = 'z_raw') -> hl.Table:
-    """
-    Compute the signed raw z score using observed and expected variant counts.
-    
-    The raw z scores are positive when the transcript had fewer variants than expected, and are negative when transcripts had more variants than expected.
-    
-    The following annotation is included in the output Table in addition to the `input_ht` keys:
-        - `output` - the raw z score
-
-    :param input_ht: Input Table.
-    :param obs: Observed variant count expression.
-    :param exp: Expected variant count expression.
-    :param output: The annotation label to use for the raw z score output, defaults to 'z_raw'.
-    :return: Table with raw z scores.
-    """
     ht = input_ht.select(_obs=obs, _exp=exp)
     ht = ht.annotate(_chisq=(ht._obs - ht._exp) ** 2 / ht._exp)
     return ht.select(**{output: hl.sqrt(ht._chisq) * hl.cond(ht._obs > ht._exp, -1, 1)})
 
 
 def calculate_all_z_scores(ht: hl.Table) -> hl.Table:
-    """
-    Calculate z scores for synomynous variants, missense variants, and pLoF variants.
-    
-    z score = {variant_annotation}_z_raw / {variant_annotation}_sd (variant_annotation could be syn, mis, or lof)
-    
-    Function will add the following annotations to output Table:
-        - syn_sd (global) - standard deviation of synonymous variants raw z score
-        - mis_sd (global) - standard deviation of missense varinats raw z score
-        - lof_sd (global) - standard deviation of pLoF variants raw z score
-        - constraint_flag - Reason gene does not have constraint metrics. One of:
-            no variants: Zero observed synonymous, missense, pLoF variants
-            no_exp_syn: Zero expected synonymous variants
-            no_exp_mis: Zero expected missense variants
-            no_exp_lof: Zero expected pLoF variants
-            syn_outlier: Too many or too few synonymous variants; synonymous z score < -5 or synonymous z score > 5
-            mis_too_many: Too many missense variants; missense z score < -5
-            lof_too_many: Too many pLoF variants; pLoF z score < -5
-        - syn_z - z score of synonymous variants
-        - mis_z - z score of missense variants
-        - lof_z - z score of pLoF variants
-
-    :param ht: Input Table with observed and expected variant counts for synomynous variants, missense variants, and pLoF variants.
-    :return: Table with z scores.
-    """
     ht = ht.annotate(**calculate_z(ht, ht.obs_syn, ht.exp_syn, 'syn_z_raw')[ht.key])
     ht = ht.annotate(**calculate_z(ht, ht.obs_mis, ht.exp_mis, 'mis_z_raw')[ht.key])
     ht = ht.annotate(**calculate_z(ht, ht.obs_lof, ht.exp_lof, 'lof_z_raw')[ht.key])
